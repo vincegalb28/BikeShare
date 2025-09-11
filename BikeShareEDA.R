@@ -42,3 +42,21 @@ p2 <- ggplot(test, aes(x = humidity)) + geom_histogram(bins = 30)
 p3 <- ggplot(test, aes(x = temp)) + geom_histogram(bins = 30)
 p4 <- ggplot(test, aes(x = windspeed)) + geom_histogram(bins = 30)
 (p1+p2)/(p3+p4)
+
+train <- train %>% select(-registered,-casual)
+bikes.lm <- linear_reg() %>%
+  set_engine("lm") %>%
+  set_mode("regression") %>%
+  fit(formula = count ~ . -datetime, data = train)
+
+bike_predictions <- predict(bikes.lm, new_data = test)
+bike_predictions
+
+kaggle_submission <- bike_predictions %>%
+  bind_cols(., test) %>%
+  select(datetime, .pred) %>%
+  rename(count=.pred) %>%
+  mutate(count=pmax(0, count)) %>%
+  mutate(datetime=as.character(format(datetime)))
+
+vroom_write(x=kaggle_submission, file="./LinearPreds.csv", delim=",")
