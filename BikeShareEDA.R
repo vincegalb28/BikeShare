@@ -1,3 +1,4 @@
+# Libraries
 library(tidyverse)
 library(tidymodels)
 library(vroom)
@@ -7,19 +8,15 @@ library(DataExplorer)
 library(GGally)
 library(patchwork)
 
+# Read in data
 test <- vroom("C:/STAT348/KaggleBikeShare/test.csv")
 train <- vroom("C:/STAT348/KaggleBikeShare/train.csv")
 
-test$season <- as.factor(test$season)
-test$holiday <- as.factor(test$holiday)
-test$workingday <- as.factor(test$workingday)
-test$weather <- as.factor(test$weather)
-train$season <- as.factor(train$season)
-train$holiday <- as.factor(train$holiday)
-train$workingday <- as.factor(train$workingday)
-train$weather <- as.factor(train$weather)
+# Clean data
+train <- train %>% select(-registered,-casual)
+train$count <- log(train$count)
 
-
+# EDA
 glimpse(test)
 glimpse(train)
 skim(test)
@@ -43,7 +40,17 @@ p3 <- ggplot(test, aes(x = temp)) + geom_histogram(bins = 30)
 p4 <- ggplot(test, aes(x = windspeed)) + geom_histogram(bins = 30)
 (p1+p2)/(p3+p4)
 
-train <- train %>% select(-registered,-casual)
+# My Recipe
+my_recipe <- recipe(count ~ ., data = train) %>%
+  step_mutate(weather = ifelse(weather == 4, 3, weather)) %>%
+  step_mutate(weather = factor(weather)) %>%
+  step_time(datetime, features = "hour") %>%
+  step_mutate(season = factor(season)) %>%
+  step_date(datetime, features = "dow")
+prepped_recipe <- prep(my_recipe)
+bake(prepped_recipe, new_data = test)
+  
+# Linear Regression
 bikes.lm <- linear_reg() %>%
   set_engine("lm") %>%
   set_mode("regression") %>%
@@ -60,3 +67,18 @@ kaggle_submission <- bike_predictions %>%
   mutate(datetime=as.character(format(datetime)))
 
 vroom_write(x=kaggle_submission, file="./LinearPreds.csv", delim=",")
+
+# Workflow
+bike.lm <- linear_reg() %>%
+set_engine("lm") %>%
+set_mode("regression")
+
+bike_workflow <- workflow() %>%
+add_recipe(my_recipe) %>%
+add_model(bike.lm) %>%
+fit(data=train)
+
+lin_preds <- predict(bike_workflow, new_data = test) %>%
+  bind_cols(test) %>%
+  mutate(pred_count = exp(.pred))
+
