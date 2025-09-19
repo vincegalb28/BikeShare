@@ -7,6 +7,7 @@ library(skimr)
 library(DataExplorer)
 library(GGally)
 library(patchwork)
+library(glmnet)
 
 # Read in data
 test <- vroom("C:/STAT348/KaggleBikeShare/test.csv")
@@ -46,9 +47,12 @@ my_recipe <- recipe(count ~ ., data = train) %>%
   step_mutate(weather = factor(weather)) %>%
   step_time(datetime, features = "hour") %>%
   step_mutate(season = factor(season)) %>%
-  step_date(datetime, features = "dow")
+  step_date(datetime, features = "dow") %>%
+  step_rm(datetime) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
 prepped_recipe <- prep(my_recipe)
-bake(prepped_recipe, new_data = test)
+baked_data <- bake(prepped_recipe, new_data = test)
   
 # Linear Regression
 bikes.lm <- linear_reg() %>%
@@ -81,4 +85,73 @@ fit(data=train)
 lin_preds <- predict(bike_workflow, new_data = test) %>%
   bind_cols(test) %>%
   mutate(pred_count = exp(.pred))
+
+head(baked_data, 5)
+
+kaggle_submission2 <- lin_preds %>%
+  transmute(
+    datetime = as.character(format(datetime)),
+    count = pred_count)
+
+
+vroom_write(x = kaggle_submission2, file = "./MyFirstRecipe.csv", delim = ",")
+
+# Penalized Regression
+preg_model <- linear_reg(penalty=.005, mixture=.9) %>%
+  set_engine("glmnet")
+preg_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(preg_model) %>%
+  fit(data=train)
+kaggle_submission3 <- predict(preg_wf, new_data = test) %>%
+  bind_cols(test %>% select(datetime)) %>%
+  mutate(count = exp(.pred)) %>%
+  transmute(
+    datetime = as.character(format(datetime)),
+    count = count)
+
+vroom_write(kaggle_submission3, file = "./glmnet_preds5.csv", delim = ",")
+
+preg_model <- linear_reg(penalty=tune(),
+                         mixture=tune()) %>%
+  set_engine("glmnet")
+
+preg_wf <- workflow() %>%
+add_recipe(my_recipe) %>%
+add_model(preg_model)
+
+grid_of_tuning_params <- grid_regular(penalty(),
+                                      mixture(),
+                                      levels = 4)
+
+
+folds <- vfold_cv(train, v = 10, repeats=1)
+
+CV_results <- preg_wf %>%
+  tune_grid(resamples=folds,
+            grid=grid_of_tuning_params,
+            metrics=metric_set(rmse,mae))
+
+collect_metrics(CV_results) %>%
+  filter(.metric=="rmse") %>%
+  ggplot(data=., aes(x=penalty, y=mean, color=factor(mixture))) +
+  geom_line()
+
+bestTune <- CV_results %>%
+  select_best(metric="rmse")
+
+final_wf <-
+  preg_wf %>%
+  finalize_workflow(bestTune) %>%
+  fit(data=train)
+
+final_preds <- final_wf %>%
+  predict(new_data = test) %>%
+  bind_cols(test %>% select(datetime)) %>%
+  mutate(count = exp(.pred)) %>%
+  transmute(
+    datetime = as.character(format(datetime)),
+    count = count)
+
+vroom_write(final_preds, file = "./tuning_parameters.csv", delim = ",")
 
