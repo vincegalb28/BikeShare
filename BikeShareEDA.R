@@ -8,6 +8,7 @@ library(DataExplorer)
 library(GGally)
 library(patchwork)
 library(glmnet)
+library(rpart)
 
 # Read in data
 test <- vroom("C:/STAT348/KaggleBikeShare/test.csv")
@@ -154,4 +155,50 @@ final_preds <- final_wf %>%
     count = count)
 
 vroom_write(final_preds, file = "./tuning_parameters.csv", delim = ",")
+
+# Regression Tree
+tree_model <- decision_tree(tree_depth = tune(),
+                            cost_complexity = tune(),
+                            min_n=tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("regression")
+
+tree_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(tree_model)
+
+tree_grid <- grid_regular(
+  tree_depth(),
+  cost_complexity(),
+  min_n(),
+  levels = 3  # adjust for how large you want the search space
+)
+
+tree_folds <- vfold_cv(train, v = 10)
+
+tree_results <- tree_wf %>%
+  tune_grid(
+    resamples = tree_folds,
+    grid = tree_grid,
+    metrics = metric_set(rmse, mae)
+  )
+
+best_tree <- tree_results %>%
+  select_best(metric = "rmse")
+
+final_tree_wf <- tree_wf %>%
+  finalize_workflow(best_tree) %>%
+  fit(data = train)
+
+tree_preds <- final_tree_wf %>%
+  predict(new_data = test) %>%
+  bind_cols(test %>% select(datetime)) %>%
+  mutate(count = exp(.pred)) %>%  # back-transform log(count)
+  transmute(
+    datetime = as.character(format(datetime)),
+    count = count
+  )
+
+vroom_write(tree_preds, file = "./tree_submission.csv", delim = ",")
+
 
