@@ -9,6 +9,11 @@ library(GGally)
 library(patchwork)
 library(glmnet)
 library(rpart)
+library(ranger)
+library(dbarts)
+library(lightgbm)
+library(bonsai)
+library(BART)
 
 # Read in data
 test <- vroom("C:/STAT348/KaggleBikeShare/test.csv")
@@ -201,4 +206,88 @@ tree_preds <- final_tree_wf %>%
 
 vroom_write(tree_preds, file = "./tree_submission.csv", delim = ",")
 
+# Random Forest
+my_mod <- rand_forest(
+  mtry = tune(),
+  min_n = tune(),
+  trees = 1000
+) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
 
+rf_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(my_mod)
+
+rf_grid <- grid_regular(
+  mtry(range = c(1, 18)), 
+  min_n(range = c(2, 20)),
+  levels = 5
+)
+
+rf_folds <- vfold_cv(train, v = 10)
+
+rf_results <- rf_wf %>%
+  tune_grid(
+    resamples = rf_folds,
+    grid = rf_grid,
+    metrics = metric_set(rmse, mae)
+  )
+
+collect_metrics(rf_results)
+
+best_rf <- rf_results %>%
+  select_best(metric = "rmse")
+
+final_rf_wf <- rf_wf %>%
+  finalize_workflow(best_rf) %>%
+  fit(data = train)
+
+srf_preds <- final_rf_wf %>%
+  predict(new_data = test) %>%
+  bind_cols(test %>% select(datetime)) %>%
+  mutate(count = exp(.pred)) %>%
+  transmute(
+    datetime = as.character(format(datetime)),
+    count = count
+  )
+
+vroom_write(srf_preds, file = "./rf_submission.csv", delim = ",")
+
+# BART/Boosting
+bart_model <- bart(trees=tune()) %>% 
+  set_engine("dbarts") %>%
+  set_mode("regression")
+
+bart_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(bart_model)
+
+bart_grid <- grid_regular(trees(range = c(25L, 200L)), levels = 4)
+
+bart_folds <- vfold_cv(train, v = 5)
+
+bart_results <- bart_wf %>%
+  tune_grid(
+    resamples = bart_folds,
+    grid = bart_grid,
+    metrics = metric_set(rmse, mae)
+  )
+
+best_bart <- bart_results %>%
+  select_best("rmse")
+
+final_bart_wf <- bart_wf %>%
+  finalize_workflow(best_bart) %>%
+  fit(data = train)
+
+bart_preds <- final_bart_wf %>%
+  predict(new_data = test) %>%
+  bind_cols(test %>% select(datetime)) %>%
+  mutate(count = exp(.pred)) %>%
+  transmute(
+    datetime = as.character(format(datetime)),
+    count = count
+  )
+
+vroom_write(bart_preds, file = "./bart_submission.csv", delim = ",")
