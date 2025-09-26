@@ -255,7 +255,7 @@ srf_preds <- final_rf_wf %>%
 vroom_write(srf_preds, file = "./rf_submission.csv", delim = ",")
 
 # BART/Boosting
-bart_model <- bart(trees=tune()) %>% 
+bart_model <- parsnip::bart(trees=tune()) %>% 
   set_engine("dbarts") %>%
   set_mode("regression")
 
@@ -275,7 +275,7 @@ bart_results <- bart_wf %>%
   )
 
 best_bart <- bart_results %>%
-  select_best("rmse")
+  select_best(metric="rmse")
 
 final_bart_wf <- bart_wf %>%
   finalize_workflow(best_bart) %>%
